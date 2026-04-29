@@ -1,2 +1,0 @@
-patchedDependencies:
-  '@open-pencil/core': patches/@open-pencil__core.patch

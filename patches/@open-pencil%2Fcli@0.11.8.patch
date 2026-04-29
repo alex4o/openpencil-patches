@@ -1,8 +1,8 @@
 diff --git a/src/headless.ts b/src/headless.ts
-index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000001 100644
+index 0c93c6ba3d8dcc5269c84b1266a1e7ff29a4bfaf..64627d91b52c885215e62a4fab3749887d389f74 100644
 --- a/src/headless.ts
 +++ b/src/headless.ts
-@@ -13,6 +13,8 @@
+@@ -13,6 +13,8 @@ const io = new IORegistry(BUILTIN_IO_FORMATS)
  export async function loadDocument(filePath: string): Promise<SceneGraph> {
    const bytes = new Uint8Array(await Bun.file(filePath).arrayBuffer())
    const { graph } = await io.readDocument({ name: filePath, data: bytes })

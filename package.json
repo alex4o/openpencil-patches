@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "dependencies": {
     "@napi-rs/canvas": "^0.1.97",
-    "@open-pencil/cli": "^0.11.2"
+    "@open-pencil/cli": "^0.11.8"
   },
   "patchedDependencies": {
-    "@open-pencil/core@0.11.2": "patches/@open-pencil%2Fcore@0.11.2.patch",
-    "@open-pencil/cli@0.11.2": "patches/@open-pencil%2Fcli@0.11.2.patch"
+    "@open-pencil/cli@0.11.8": "patches/@open-pencil%2Fcli@0.11.8.patch",
+    "@open-pencil/core@0.11.8": "patches/@open-pencil%2Fcore@0.11.8.patch"
   }
 }

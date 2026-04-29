@@ -56,39 +56,92 @@ bun run debug-layout.ts design.fig --canvas            # use @napi-rs/canvas tex
 
 Reports mismatches grouped by severity: CRITICAL (>20px), MODERATE (5-20px), MINOR (1-5px).
 
-## Patches (`patches/@open-pencil%2Fcore@0.11.2.patch`)
+## Patches — current status at 0.11.8
 
-Applied automatically by `bun install`. Contains four fixes:
+Two of the original fixes are now upstream; four are still locally patched.
+Applied automatically by `bun install`.
 
-### 1. package.json exports
-Exposes internal modules (kiwi, scene-graph-instances, etc.) so our scripts can import them.
+### Upstreamed (no longer in patches/)
 
-### 2. layout.ts — Stored dimensions fix
-**The big one.** Without CanvasKit, OpenPencil falls back to `estimateTextSize()` which uses
-`fontSize * 0.6 * text.length` — absolute garbage for anything but monospace ASCII.
-Our patch makes it use the stored .fig dimensions (Figma's own computed values) instead,
-only falling back to the estimate for newly-created nodes that still have the 100×100 default.
+**`layout.ts` stored-dimensions fix** — submitted as issue #212, merged in
+`open-pencil/open-pencil@226542cfc` (`fix(layout): use stored .fig dimensions for
+headless text measurement`). Follow-up `e23b3f0ce` (`feat(layout): use opentype.js
+for accurate headless text measurement`) goes further: when no CanvasKit, upstream
+now uses opentype.js for real glyph metrics, falling back to our `hasStoredSize`
+branch. This alone reduced layout mismatches by 55.6% (26,247 → 11,669) on
+material3.fig at 0.11.2; opentype.js measurement should improve it further.
 
-This alone reduced layout mismatches by 55.6% (26,247 → 11,669 on material3.fig).
+**`core/package.json` 14 missing subpath exports** — added independently in
+`open-pencil/open-pencil@d73caafc8` (`Add 14 missing subpath exports to
+@open-pencil/core`). Same set: color-management, constants, copy, fig-compress,
+io/formats/{pen,svg}, kiwi/{codec,convert,fig-import,fig-parse-core,serialize},
+render/tailwind, scene-graph-instances, types.
 
-### 3. fonts.ts — Headless font caching
-`registerAndCache()` was gated on `registerFontInCanvasKit()` returning true. In headless
-mode (no CanvasKit), this meant fonts were never cached — every font load was a no-op.
-Patched to always cache regardless of CanvasKit availability.
+### Still patched locally (`patches/@open-pencil%2Fcore@0.11.8.patch`)
 
-## Patches (`patches/@open-pencil%2Fcli@0.11.2.patch`)
+**`text/fonts.ts` — Headless font caching.** File was moved from `src/fonts.ts` to
+`src/text/fonts.ts` by upstream restructure (`07674d191 Restructure
+@open-pencil/core into domain modules`). `registerAndCache()` is still gated on
+`registerFontInCanvasKit()` returning true, so in headless mode (no CanvasKit)
+fonts are never cached — every font load becomes a no-op. Patched to always cache
+regardless of CanvasKit availability.
 
-### headless.ts — Kill computeAllLayouts
-Comments out the `computeAllLayouts(graph)` call in `loadDocument()`. This is the
-nuclear option — every CLI command (`export`, `convert`, `find`, `tree`, etc.) now
-uses Figma's stored positions instead of Yoga's recomputed garbage. If you're only
-working with .fig imports (not creating nodes programmatically), this is what you want.
+**`canvas/renderer.ts` — Kill computeAllLayouts in prepareForExport.** File was
+moved from `src/renderer/renderer.ts` to `src/canvas/renderer.ts`. Function
+signature changed: now returns `Promise<() => void>` (a cleanup that restores the
+previous text measurer). Our patch keeps the new return contract but comments out
+the `computeAllLayouts(graph, pageId)` call before the return. Without this, the
+PNG/SVG export path stomps Figma's stored positions right before drawing
+(symptom: text truncation, shifted elements).
 
----
+**`io/formats/jsx/export.ts` — Instance handling.** Same path as before. Figma
+component instances get exported as PascalCase component tags with variant props
+parsed from the instance name, instead of generic `<div>`. Imports
+`getMainComponent` directly from `'../../../scene-graph/instances'` (the file was
+restructured into `scene-graph/`, but the symbol is unchanged).
 
-### 4. jsx/export.ts — Instance handling
-Figma component instances now export as PascalCase component tags with variant props
-parsed from the instance name, instead of generic `<div>` tags.
+### Still patched locally (`patches/@open-pencil%2Fcli@0.11.8.patch`)
+
+**`cli/src/headless.ts` — Kill computeAllLayouts in loadDocument.** Comments out
+`computeAllLayouts(graph)` so every CLI command (`export`, `convert`, `find`,
+`tree`, etc.) uses Figma's stored positions instead of Yoga's recomputed garbage.
+Only safe if you're working with .fig imports — programmatically created nodes
+will end up at their default positions.
+
+### Re-patching workflow
+
+If a future upstream version invalidates a patch, regenerate with bun:
+
+```bash
+bun patch @open-pencil/core@<version>
+# edit files under node_modules/@open-pencil/core/...
+bun patch --commit 'node_modules/@open-pencil/core'
+```
+
+Bun rewrites `patchedDependencies` in `package.json` and drops the new patch into
+`patches/`.
+
+## PNG Export: Use SVG → resvg, not Skia directly
+
+**Don't trust `openpencil export --format png`.** The Skia renderer has a stroke-rendering
+bug: for some INSTANCE nodes with `independentCorners=true` and stroke `align=INSIDE`, the
+rounded corners get drawn as squares even though the node's corner data is correct. Same
+node exports cleanly as SVG — the SVG path generator reads the radii fine, it's the Skia
+paint step that screws up.
+
+**Workaround**: export SVG, then rasterize with resvg-wasm.
+
+```bash
+# 1. Export SVG from .fig (no Skia in the loop)
+openpencil export design.fig --format svg --node "0:45205" -o button.svg
+
+# 2. Rasterize SVG → PNG (uses openfig-cli's resvg-wasm + Inter v3 fonts)
+node /Users/alex4o/Projects/openfig-cli/rasterize-svg.mjs button.svg button.png 2   # scale=2
+```
+
+`rasterize-svg.mjs` lives in the sibling `openfig-cli/` project. It preprocesses the SVG
+to convert open-pencil's `color(display-p3 R G B / A)` CSS Color L4 syntax into `rgb()`/
+`rgba()` — resvg doesn't parse display-p3 and silently paints everything black otherwise.
 
 ## Known Issues & Learnings
 
@@ -116,6 +169,12 @@ a node that genuinely is 100×100, but in practice that's rare enough to not mat
 ### Yoga version
 yoga-layout 3.3.0-grid.3+ has `free()`/`freeRecursive()` built in. The old memory leak
 patch (yoga-layout@2.x) is no longer needed.
+
+### Skia renderer stroke bug (unfixed)
+`renderer/strokes.ts` `drawStrokeWithAlign()` with `align=INSIDE` draws a square stroke
+for some INSTANCE nodes that clearly have `topLeftRadius` etc. set. SVG export for the
+same node is correct. Not worth chasing upstream — rasterize the SVG instead (see
+"PNG Export" above).
 
 ## Upstream Issue
 
